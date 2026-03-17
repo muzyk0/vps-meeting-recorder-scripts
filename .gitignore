@@ -3,3 +3,8 @@
 *.webm
 *.log
 .DS_Store
+.env
+artifacts/
+logs/
+recordings/
+shots/
