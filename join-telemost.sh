@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/lib/common.sh"
 load_env_file
 
 MEETING_URL="${1:-${MEETING_URL:-}}"
-GUEST_NAME="${2:-${GUEST_NAME:-Recorder Bot}}"
+GUEST_NAME="${2:-${GUEST_NAME:-Гость}}"
 DISPLAY="${DISPLAY:-:99}"
 SESSION_NAME="${SESSION_NAME:-telemost-recorder}"
 HEADED="${HEADED:-1}"

@@ -7,9 +7,10 @@ source "$SCRIPT_DIR/lib/common.sh"
 load_env_file
 
 MEETING_URL="${1:-${MEETING_URL:-}}"
-GUEST_NAME="${2:-${GUEST_NAME:-Recorder Bot}}"
+GUEST_NAME="${2:-${GUEST_NAME:-Гость}}"
 SESSION_NAME="${SESSION_NAME:-telemost-recorder}"
-OUTPUT_DIR="${OUTPUT_DIR:-$SCRIPT_DIR/recordings}"
+OUTPUT_DIR_RAW="${OUTPUT_DIR:-$HOME/Movies/Records}"
+OUTPUT_DIR="$(expand_path "$OUTPUT_DIR_RAW")"
 NO_JOIN="${NO_JOIN:-0}"
 PREPARE_ONLY="${PREPARE_ONLY:-0}"
 RECORD_ONLY="${RECORD_ONLY:-0}"
@@ -18,14 +19,24 @@ START_RECORDING_DELAY="${START_RECORDING_DELAY:-8}"
 AUDIO_WARMUP_DURATION="${AUDIO_WARMUP_DURATION:-3}"
 PULSE_SINK_NAME="${PULSE_SINK_NAME:-meeting_sink}"
 AUDIO_WARMUP_SOURCE="${AUDIO_WARMUP_SOURCE:-${PULSE_SINK_NAME}.monitor}"
+POST_RECORDING_CLOSE_BROWSER="${POST_RECORDING_CLOSE_BROWSER:-1}"
 LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"
+STATE_DIR="${STATE_DIR:-$SCRIPT_DIR/.state}"
 
 ensure_dir "$OUTPUT_DIR"
 ensure_dir "$LOG_DIR"
+ensure_dir "$STATE_DIR"
 
 RUN_LOG="$LOG_DIR/run-telemost-recorder.log"
+RUNNER_PID_FILE="$STATE_DIR/${SESSION_NAME}.runner.pid"
 append_log_header "$RUN_LOG" "$@"
 exec >> >(tee -a "$RUN_LOG") 2>&1
+
+printf '%s\n' "$$" > "$RUNNER_PID_FILE"
+cleanup_runner_pid() {
+  rm -f "$RUNNER_PID_FILE"
+}
+trap cleanup_runner_pid EXIT
 
 OUTPUT_FILE="${OUTPUT_FILE:-$OUTPUT_DIR/${SESSION_NAME}-$(date +%F-%H%M%S).mp4}"
 export SESSION_NAME OUTPUT_FILE
@@ -62,8 +73,19 @@ if [ "$AUDIO_WARMUP_DURATION" -gt 0 ]; then
   ffmpeg -hide_banner -loglevel error -f pulse -i "$AUDIO_WARMUP_SOURCE" -t "$AUDIO_WARMUP_DURATION" -f null - >/dev/null 2>&1 || true
 fi
 
+close_browser_tail() {
+  log "Closing Telemost browser tail"
+  pkill -f 'agent-browser-linux-x64' || true
+  sleep 1
+  pkill -f '/tmp/agent-browser-chrome-' || true
+}
+
 log "Step 3/3: recording screen"
 "$SCRIPT_DIR/record-screen.sh" "$OUTPUT_FILE"
+
+if bool_is_true "$POST_RECORDING_CLOSE_BROWSER"; then
+  close_browser_tail
+fi
 
 cat <<EOF
 Run completed.

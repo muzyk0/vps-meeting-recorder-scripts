@@ -1,18 +1,82 @@
 # VPS meeting recorder scripts
 
-Simple bash-based tooling for recording browser meetings on a Linux VPS.
+Небольшой shell-based проект для записи созвонов на Linux VPS.
 
-Current first-class target: **Yandex Telemost guest join flow**.
+Сейчас основной поддерживаемый сценарий: **Yandex Telemost guest join + запись экрана и звука**.
 
-The project is intentionally small and shell-first:
-- `prepare-env.sh` sets up Xvfb + PulseAudio null sink
-- `join-telemost.sh` opens a Telemost link via `agent-browser`, fills guest name, tries to keep mic/camera off, and saves troubleshooting artifacts
-- `record-screen.sh` records the virtual display and PulseAudio monitor with `ffmpeg`
-- `run-telemost-recorder.sh` ties the flow together
+---
 
-It should also be straightforward to extend later with another `join-*.sh` script for VK or other meeting platforms.
+## Основной рабочий flow
 
-## File layout
+Для обычного запуска используй **detached launcher**:
+
+```bash
+cd ~/.openclaw/workspace/projects/vps-meeting-recorder-scripts
+./start-telemost-recording.sh 'https://telemost.yandex.ru/j/64264378385479' 'Recorder Bot'
+```
+
+С ограничением по времени:
+
+```bash
+cd ~/.openclaw/workspace/projects/vps-meeting-recorder-scripts
+DURATION=00:45:00 ./start-telemost-recording.sh 'https://telemost.yandex.ru/j/64264378385479' 'Recorder Bot'
+```
+
+Это рекомендуемый способ для чата, автоматизации и фонового запуска.
+
+### Что делает detached launcher
+
+1. запускает запись в фоне, не привязывая её к текущей shell/tool session
+2. поднимает/проверяет `Xvfb` и `PulseAudio`
+3. открывает Telemost через `agent-browser`
+4. заходит гостем во встречу
+5. ждёт перед записью и прогревает аудио
+6. пишет mp4 через `ffmpeg`
+7. после штатного завершения закрывает browser tail, чтобы гость вышел из встречи
+
+---
+
+## Куда сохраняются записи
+
+По умолчанию итоговые файлы пишутся сюда:
+
+```bash
+~/Movies/Records/
+```
+
+Пример:
+
+```bash
+~/Movies/Records/telemost-recorder-2026-03-18-001942.mp4
+```
+
+Проверить последний файл:
+
+```bash
+ls -1t ~/Movies/Records/*.mp4 | head
+```
+
+---
+
+## Как остановить запись
+
+Используй штатный stop-скрипт:
+
+```bash
+cd ~/.openclaw/workspace/projects/vps-meeting-recorder-scripts
+./stop-telemost-recording.sh
+```
+
+Он:
+
+- останавливает detached runner
+- мягко завершает `ffmpeg` через `SIGINT`, чтобы mp4 успел закрыться
+- при необходимости добивает процесс сильнее
+- закрывает browser tail, чтобы бот вышел из встречи
+
+---
+
+## Основные файлы
 
 ```text
 .
@@ -24,180 +88,157 @@ It should also be straightforward to extend later with another `join-*.sh` scrip
 ├── prepare-env.sh
 ├── record-screen.sh
 ├── record-telemost.sh        # compatibility shim -> record-screen.sh
-├── run-telemost-recorder.sh
+├── run-telemost-recorder.sh  # foreground/debug flow
+├── start-telemost-recording.sh
+├── stop-telemost-recording.sh
 └── start-telemost-env.sh     # compatibility shim -> prepare-env.sh
 ```
 
-Runtime-generated directories:
-- `artifacts/` — screenshots, HTML dumps, browser debug outputs
-- `logs/` — script logs
-- `recordings/` — MP4 files
+Runtime-директории:
 
-## Requirements
+- `~/Movies/Records/` — итоговые mp4 по умолчанию
+- `logs/` — логи скриптов
+- `artifacts/` — скриншоты, html dump, debug-артефакты браузера
+- `.state/` — pid/state-файлы для корректного start/stop flow
 
-Expected tools on the VPS:
-- `agent-browser`
-- `ffmpeg`
-- `Xvfb`
-- `pulseaudio`
-- `pactl`
-- `xdpyinfo`
+---
 
-Example install on Debian/Ubuntu:
+## Подготовка окружения
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y ffmpeg xvfb pulseaudio x11-utils dbus-x11 chromium
-```
-
-`agent-browser` is expected to be already installed and available in `PATH`.
-
-## Configuration
-
-Copy `.env.example` to `.env` and adjust what matters:
-
-```bash
+cd ~/.openclaw/workspace/projects/vps-meeting-recorder-scripts
 cp .env.example .env
-```
-
-Most useful variables:
-- `MEETING_URL` — Telemost meeting URL
-- `GUEST_NAME` — guest display name
-- `DISPLAY` — virtual X display, default `:99`
-- `SESSION_NAME` — browser session name used by `agent-browser`
-- `OUTPUT_DIR` — where recordings go
-- `DURATION` — recording duration, empty means no `-t` limit
-- `NO_JOIN=1` — stop in the lobby before clicking `Подключиться`
-- `DRY_RUN=1` — print commands without changing anything, where supported
-- `SCREENSHOT_DIR` — where join-flow screenshots/debug files go
-- `HEADED=1` — keep browser headed for VPS screen capture
-
-## Recommended usage
-
-### 1) Prepare the environment
-
-```bash
 ./prepare-env.sh
 ```
 
-This starts or reuses:
-- `Xvfb` on `DISPLAY`
-- PulseAudio daemon
-- a null sink like `meeting_sink`
+---
 
-### 2) Inspect Telemost lobby without joining
+## Foreground/debug flow
 
-Safe debugging mode:
+Если нужно дебажить по шагам, используй foreground-скрипт:
 
 ```bash
-NO_JOIN=1 ./join-telemost.sh 'https://telemost.yandex.ru/j/64264378385479' 'Recorder Bot'
+./run-telemost-recorder.sh 'https://telemost.yandex.ru/j/64264378385479' 'Recorder Bot'
 ```
 
-Artifacts are saved under `artifacts/screenshots/<session-name>/` by default.
+Это debug-вариант. Для обычной работы предпочитай `start-telemost-recording.sh`.
 
-### 3) Join and keep the browser ready for recording
+### Полезные debug-режимы
+
+Проверить только окружение:
 
 ```bash
-NO_JOIN=0 ./join-telemost.sh 'https://telemost.yandex.ru/j/64264378385479' 'Recorder Bot'
+PREPARE_ONLY=1 ./run-telemost-recorder.sh 'https://telemost.yandex.ru/j/64264378385479' 'Recorder Bot'
 ```
 
-The script tries to:
-- fill the guest name
-- dismiss `Понятно` dialogs
-- keep microphone disabled
-- keep camera disabled
-- save before/after screenshots and debug dumps
-
-### 4) Record the virtual screen
-
-```bash
-DURATION=01:00:00 ./record-screen.sh ./recordings/telemost-demo.mp4
-```
-
-Unlimited recording:
-
-```bash
-DURATION= ./record-screen.sh ./recordings/telemost-live.mp4
-```
-
-### 5) One-shot wrapper
-
-This is the main script for real usage. By default it now does:
-
-- prepare environment
-- join meeting
-- wait briefly for playback to settle
-- warm up the Pulse monitor
-- start recording
-
-Safe smoke mode without joining and without recording:
+Не входить и не писать:
 
 ```bash
 NO_JOIN=1 SKIP_RECORDING=1 ./run-telemost-recorder.sh 'https://telemost.yandex.ru/j/64264378385479' 'Recorder Bot'
 ```
 
-Real join + recording:
+Войти, но не писать:
 
 ```bash
-DURATION=00:45:00 ./run-telemost-recorder.sh 'https://telemost.yandex.ru/j/64264378385479' 'Recorder Bot'
+SKIP_RECORDING=1 ./run-telemost-recorder.sh 'https://telemost.yandex.ru/j/64264378385479' 'Recorder Bot'
 ```
 
-For Telemost, keeping the default warmup is recommended. If audio starts too early or too late on your host, tune these:
+Только запись без повторного входа:
 
 ```bash
-START_RECORDING_DELAY=10 AUDIO_WARMUP_DURATION=3 \
-  ./run-telemost-recorder.sh 'https://telemost.yandex.ru/j/64264378385479' 'Recorder Bot'
+RECORD_ONLY=1 DURATION=00:10:00 ./run-telemost-recorder.sh dummy 'Recorder Bot'
 ```
 
-If needed, you can still override behavior explicitly:
-
-```bash
-NO_JOIN=0 DURATION=00:45:00 ./run-telemost-recorder.sh 'https://telemost.yandex.ru/j/64264378385479' 'Recorder Bot'
-```
-
-## Debugging modes
-
-### Dry run
+Dry-run:
 
 ```bash
 DRY_RUN=1 ./prepare-env.sh
-DRY_RUN=1 ./record-screen.sh ./recordings/test.mp4
+DRY_RUN=1 ./record-screen.sh ~/Movies/Records/test.mp4
 ```
 
-For `join-telemost.sh`, `DRY_RUN=1` prints `agent-browser` commands, but real UI validation obviously requires normal mode.
+---
 
-### No-join lobby mode
+## Настройка через `.env`
+
+Самые важные переменные:
+
+- `MEETING_URL` — ссылка на Телемост
+- `GUEST_NAME` — имя гостя
+- `OUTPUT_DIR` — куда писать записи
+- `DURATION` — длительность записи
+- `START_RECORDING_DELAY` — ждать после входа перед записью
+- `AUDIO_WARMUP_DURATION` — прогрев monitor перед записью
+- `NO_JOIN=1` — не нажимать `Подключиться`, только дойти до lobby
+- `HEADED=1` — держать браузер в visual/headed режиме
+
+Текущий дефолт для файлов:
 
 ```bash
-NO_JOIN=1 ./join-telemost.sh "$MEETING_URL" "$GUEST_NAME"
+OUTPUT_DIR=~/Movies/Records
 ```
 
-This is the main safe mode for checking Telemost selectors after UI changes.
+---
 
-### Logs and artifacts
+## Bundled skill launcher
+
+Если используешь skill launcher, вызывай его по абсолютному пути:
+
+```bash
+python3 /home/admin/.openclaw/workspace/skills/telemost-recording/scripts/launch_telemost_recording.py --url 'https://telemost.yandex.ru/j/64264378385479' --guest-name 'Recorder Bot'
+```
+
+Важно: **не** запускай `python3 scripts/launch_telemost_recording.py` из каталога проекта — такого файла в проекте нет; launcher лежит в skill-директории.
+
+---
+
+## Логи и артефакты
+
+Логи:
 
 - `logs/prepare-env.log`
 - `logs/join-telemost.log`
 - `logs/record-screen.log`
 - `logs/run-telemost-recorder.log`
+- `logs/start-telemost-recording.log`
+- `logs/stop-telemost-recording.log`
+
+Артефакты браузера:
+
 - `artifacts/screenshots/.../*.png`
 - `artifacts/screenshots/.../*-snapshot.txt`
 - `artifacts/screenshots/.../*-console.txt`
 - `artifacts/screenshots/.../*-errors.txt`
-- optional HTML dumps when `SAVE_HTML_DUMP=1`
 
-## Extension path
+---
 
-To support another platform later, keep the same pattern:
-- `prepare-env.sh` remains shared
-- add `join-vk.sh` or `join-zoom.sh`
-- reuse `record-screen.sh`
-- add a small wrapper like `run-vk-recorder.sh` if needed
+## Как понять, что всё сработало
 
-## Notes and caveats
+Признаки рабочего запуска:
 
-- Telemost UI text and button labels can change. If join starts failing, first run `NO_JOIN=1` and inspect the saved snapshot and screenshot files.
-- The current guest flow was inspected against a real Telemost lobby and matched these labels: `Подключиться`, `Включить микрофон`, `Включить камеру`, and `Понятно` dialogs after denied media access.
-- On a VPS, microphone/camera are usually unavailable. That is actually helpful here: Telemost exposes disabled-state prompts that the script dismisses, and the lobby still allows guest entry.
-- Recording system audio on a VPS depends on how audio reaches PulseAudio. This repo prepares the sink and records its monitor, but you may still need browser/audio routing tweaks depending on the host image.
- sink and records its monitor, but you may still need browser/audio routing tweaks depending on the host image.
+- `join-telemost.sh` дошёл до `Joined Telemost meeting`
+- `run-telemost-recorder.sh` дошёл до `Step 3/3: recording screen`
+- в `~/Movies/Records/` появился `.mp4`
+- в `logs/record-screen.log` есть `Recording saved to ...`
+
+Быстрая проверка файла:
+
+```bash
+ffprobe ~/Movies/Records/<file>.mp4
+```
+
+Проверка наличия звука:
+
+```bash
+ffmpeg -i ~/Movies/Records/<file>.mp4 -af volumedetect -vn -sn -dn -f null -
+```
+
+---
+
+## Что сейчас считается каноничным
+
+- обычный старт: `start-telemost-recording.sh`
+- обычная остановка: `stop-telemost-recording.sh`
+- debug/foreground: `run-telemost-recorder.sh`
+- путь для сохранения: `~/Movies/Records`
+
+Если что-то расходится с этим правилом — считай старой инструкцией и правь в пользу этого блока.

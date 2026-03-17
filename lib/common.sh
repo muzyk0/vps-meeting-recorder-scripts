@@ -39,6 +39,15 @@ ensure_dir() {
   mkdir -p "$1"
 }
 
+expand_path() {
+  local path="${1:-}"
+  case "$path" in
+    ~) printf '%s\n' "$HOME" ;;
+    ~/*) printf '%s\n' "$HOME/${path#~/}" ;;
+    *) printf '%s\n' "$path" ;;
+  esac
+}
+
 run_cmd() {
   if bool_is_true "${DRY_RUN:-0}"; then
     log "[dry-run] $*"

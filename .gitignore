@@ -8,3 +8,4 @@ artifacts/
 logs/
 recordings/
 shots/
+.state/
